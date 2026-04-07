@@ -264,7 +264,17 @@ thead th.col-resumo { position: sticky; left: 110px; z-index: 10; }
 .step-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
 .step-desc { font-size: 12px; color: var(--text2); margin-bottom: 10px; }
 
-/* Bloqueio row highlight */
+/* Status Dev badges coloridos */
+.status-dev-badge { border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 600; display: inline-block; white-space: nowrap; cursor: pointer; }
+.status-dev-a-fazer       { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; }
+.status-dev-em-atendimento{ background: var(--blue-light); color: var(--blue); border: 1px solid var(--blue-mid); }
+.status-dev-aguardando-qa { background: #fef3ff; color: #7c3aed; border: 1px solid #c4b5fd; }
+.status-dev-atendimento-qa{ background: var(--purple-light); color: var(--purple); border: 1px solid var(--purple-mid); }
+.status-dev-homol-po      { background: var(--amber-light); color: var(--amber); border: 1px solid var(--amber-mid); }
+.status-dev-conclu-do     { background: var(--green-light); color: var(--green); border: 1px solid var(--green-mid); }
+.status-dev-bloqueio      { background: var(--red-light); color: var(--red); border: 1px solid var(--red-mid); }
+
+.empty-row td { text-align: center; padding: 28px; color: var(--text3); font-size: 13px; }
 tr[data-id].bloqueio-row, tr[data-id][style*="background:#ffeaea"] { background: #ffeaea !important; }
 tr[data-id][style*="background:#ffeaea"]:hover td { background: #ffd6d6 !important; }
 tr[data-id][style*="background:#ffeaea"] td.col-chave,
@@ -272,7 +282,6 @@ tr[data-id][style*="background:#ffeaea"] td.col-resumo { background: #ffeaea !im
 tr[data-id][style*="background:#ffeaea"]:hover td.col-chave,
 tr[data-id][style*="background:#ffeaea"]:hover td.col-resumo { background: #ffd6d6 !important; }
 
-.empty-row td { text-align: center; padding: 28px; color: var(--text3); font-size: 13px; }
 .toast { position: fixed; bottom: 24px; right: 24px; background: #1e2d5e; color: #fff; border-radius: 10px; padding: 12px 20px; font-size: 13px; font-weight: 500; box-shadow: var(--shadow-lg); z-index: 9999; opacity: 0; transform: translateY(10px); transition: all .25s; pointer-events: none; }
 .toast.show { opacity: 1; transform: translateY(0); }
 @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
@@ -410,6 +419,23 @@ tr[data-id][style*="background:#ffeaea"]:hover td.col-resumo { background: #ffd6
       <div class="dash-card-title">⚠️ Transbordos</div>
       <div class="transbordo-list" id="transbordoList"></div>
     </div>
+  </div>
+  <!-- Saldo da Sprint embutido no Dashboard -->
+  <div class="dash-card" style="margin-top:4px">
+    <div class="dash-card-title">💰 Saldo da Sprint <span style="font-size:10px;font-weight:400;opacity:.6;margin-left:6px">atualiza automaticamente</span></div>
+    <table class="saldo-table" id="saldoTableDash">
+      <thead>
+        <tr>
+          <th>Pessoa</th>
+          <th>Capacidade (h)</th>
+          <th>Em Execução</th>
+          <th>Fila de Espera</th>
+          <th>Saldo (h)</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="saldoBodyDash"></tbody>
+    </table>
   </div>
 </div>
 
@@ -668,8 +694,8 @@ function calcCard(c) {
     c.estDev = '';
   }
 
-  // Início QA: only auto-calc if NOT manually set
-  if (!c.inicioQAManual) {
+  // Início QA: só auto-calcula se NÃO foi apagado ou fixado manualmente
+  if (!c.inicioQAManual && !c.inicioQACleared) {
     c.inicioQA = c.estDev ? nextWDay(c.estDev) : '';
   }
 
@@ -686,11 +712,40 @@ function calcCard(c) {
   // Total
   c.totalHoras = (c.hDev || 0) + (c.hQA || 0);
 
-  // Desvio Dev
-  c.desvioDev = (!c.estDev || !cfg.end) ? '' : (c.estDev <= cfg.end ? 'ok' : 'atrasado');
+  // Desvio Dev — compara com HOJE (data vencida) E com fim da sprint
+  const hoje = toISO(new Date());
+  if (!c.estDev) {
+    c.desvioDev = '';
+    c.diasAtrasodev = 0;
+  } else if (c.estDev < hoje) {
+    // Data de Dev já passou → vencida em relação a hoje
+    c.desvioDev = 'atrasado';
+    c.diasAtrasodev = wdaysBetween(c.estDev, hoje);
+  } else if (cfg.end && c.estDev > cfg.end) {
+    // Ainda não venceu hoje mas vai ultrapassar o fim da sprint
+    c.desvioDev = 'atrasado';
+    c.diasAtrasodev = wdaysBetween(cfg.end, c.estDev);
+  } else {
+    c.desvioDev = 'ok';
+    c.diasAtrasodev = 0;
+  }
 
-  // Desvio QA
-  c.desvioQA = (!c.estQA || !cfg.end) ? '' : (c.estQA <= cfg.end ? 'ok' : 'atrasado');
+  // Desvio QA — compara com HOJE (data vencida) E com fim da sprint
+  if (!c.estQA) {
+    c.desvioQA = '';
+    c.diasAtrasoQA = 0;
+  } else if (c.estQA < hoje) {
+    // Data de QA já passou → vencida em relação a hoje
+    c.desvioQA = 'atrasado';
+    c.diasAtrasoQA = wdaysBetween(c.estQA, hoje);
+  } else if (cfg.end && c.estQA > cfg.end) {
+    // Ainda não venceu hoje mas vai ultrapassar o fim da sprint
+    c.desvioQA = 'atrasado';
+    c.diasAtrasoQA = wdaysBetween(cfg.end, c.estQA);
+  } else {
+    c.desvioQA = 'ok';
+    c.diasAtrasoQA = 0;
+  }
 
   // Congelar horas Dev quando entrar em QA (preserva o valor, apenas sinaliza)
   const isEmQA = ['Em teste','Disponivel para Teste','Em homologação','Disponivel para Homologação'].includes(c.situacao);
@@ -791,12 +846,17 @@ function rowHTML(c) {
   const ddClass = c.estDev && cfg.end && c.estDev > cfg.end ? 'calc-date atrasado' : 'calc-date';
   const dqClass = c.estQA && cfg.end && c.estQA > cfg.end ? 'calc-date atrasado' : 'calc-date';
 
-  const desvD = c.desvioDev==='ok' ? `<span class="dev-ok">🟢 No prazo</span>` :
-                c.desvioDev==='atrasado' ? `<span class="dev-atrasado">🔴 Atrasado</span>` :
-                `<span class="dev-dash">—</span>`;
-  const desvQ = c.desvioQA==='ok' ? `<span class="dev-ok">🟢 No prazo</span>` :
-                c.desvioQA==='atrasado' ? `<span class="dev-atrasado">🔴 Atrasado</span>` :
-                `<span class="dev-dash">—</span>`;
+  const desvD = c.desvioDev==='ok'
+    ? `<span class="dev-ok">🟢 No prazo</span>`
+    : c.desvioDev==='atrasado'
+    ? `<span class="dev-atrasado">🔴 ${c.diasAtrasodev}d atraso</span>`
+    : `<span class="dev-dash">—</span>`;
+
+  const desvQ = c.desvioQA==='ok'
+    ? `<span class="dev-ok">🟢 No prazo</span>`
+    : c.desvioQA==='atrasado'
+    ? `<span class="dev-atrasado">🔴 ${c.diasAtrasoQA}d atraso</span>`
+    : `<span class="dev-dash">—</span>`;
 
   const transbHTML = c.transbordo ? `<span class="transb-badge">⚠️ TRANSBORDO</span>` : `<span class="no-transb">—</span>`;
   const contab = c.contabiliza===1 ? `<span class="contabiliza">1</span>` : `<span class="contabiliza nao-contabiliza">0</span>`;
@@ -839,7 +899,7 @@ function rowHTML(c) {
     <td style="text-align:center">
       ${c.estDev ? `<span class="${ddClass}">${fmtDate(c.estDev)}</span>` : `<span class="dev-dash">—</span>`}
     </td>
-    <td style="text-align:center">${desvD}</td>
+    <td style="text-align:center${c.desvioDev==='atrasado'?';background:#fff1f1':''}">${desvD}</td>
     <td style="text-align:center">
       ${c.totalHoras ? `<span class="total-chip">${c.totalHoras}h</span>` : `<span class="dev-dash">—</span>`}
     </td>
@@ -854,12 +914,16 @@ function rowHTML(c) {
     <td style="text-align:center">
       ${c.estQA ? `<span class="${dqClass}">${fmtDate(c.estQA)}</span>` : `<span class="dev-dash">—</span>`}
     </td>
-    <td style="text-align:center">${desvQ}</td>
+    <td style="text-align:center${c.desvioQA==='atrasado'?';background:#fff1f1':''}">${desvQ}</td>
     <td>
-      <div style="display:flex;align-items:center;gap:3px">
-        <select class="inline-select ch-status" onchange="updateField('${c.id}','statusDev',this.value)">${statusOpts}</select>${statusAutoHint}
-        ${c.statusDevManual ? `<span onclick="resetStatusDev('${c.id}')" title="Voltar para sincronização automática com Situação" style="cursor:pointer;font-size:10px;color:var(--text3);padding:1px 4px;border:1px solid var(--border);border-radius:3px;white-space:nowrap" onmouseover="this.style.color='var(--blue)'" onmouseout="this.style.color='var(--text3)'">↺</span>` : ''}
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="status-dev-badge status-dev-${(c.statusDev||'').toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')}">
+          ${c.statusDev||'—'}
+        </span>
+        ${statusAutoHint}
+        ${c.statusDevManual ? `<span onclick="resetStatusDev('${c.id}')" title="Resetar para automático" style="cursor:pointer;font-size:10px;color:var(--text3);padding:1px 4px;border:1px solid var(--border);border-radius:3px" onmouseover="this.style.color='var(--blue)'" onmouseout="this.style.color='var(--text3)'">↺</span>` : ''}
       </div>
+      <select class="inline-select ch-status" onchange="updateField('${c.id}','statusDev',this.value)" style="margin-top:2px;font-size:11px;max-width:130px">${statusOpts}</select>
     </td>
     <td style="text-align:center">${transbHTML}</td>
     <td style="text-align:center">${contab}</td>
@@ -929,9 +993,16 @@ function updateField(id, field, value) {
     if (suggested && !c.statusDevManual) {
       c.statusDev = suggested;
     }
-    // Sugerir próxima etapa quando Situação = Desenvolvida
+    // Quando muda para Desenvolvida: sugerir próxima etapa + auto-preencher Início QA
     if (value === 'Desenvolvida') {
       showToastSugestao(c.id, 'Disponivel para Teste');
+      if (!c.inicioQAManual && !c.inicioQACleared && !c.inicioQA) {
+        c.inicioQA = toISO(new Date());
+      }
+    }
+    // Quando entra em QA: registrar Início QA com data de hoje se ainda não preenchido
+    if (['Em teste','Disponivel para Teste','Em homologação','Atendimento QA'].includes(value) && !c.inicioQAManual && !c.inicioQACleared && !c.inicioQA) {
+      c.inicioQA = toISO(new Date());
     }
   }
 
@@ -954,7 +1025,12 @@ function updateField(id, field, value) {
 function updateInicioQA(id, value) {
   const c = cards.find(x=>x.id===id); if (!c) return;
   c.inicioQA = value;
-  c.inicioQAManual = !!value; // mark as manual; clear to re-enable auto-calc
+  if (value) {
+    c.inicioQAManual = true;  // usuário preencheu → fixar
+  } else {
+    c.inicioQAManual = false;
+    c.inicioQACleared = true; // usuário apagou intencionalmente → não repor automaticamente
+  }
   calcCard(c); saveToLS(); renderTable(); renderDashboard(); renderSaldo();
 }
 
@@ -1276,7 +1352,8 @@ function updateTopBar() {
 
 function confirmClear() {
   if (confirm('Apagar todos os cards? Esta ação não pode ser desfeita.')) {
-    cards=[];
+    cards = [];
+    localStorage.setItem(LS_PREFIX+'cleared', '1'); // flag: usuário limpou intencionalmente
     saveToLS(); renderTable(); renderDashboard(); renderSaldo();
     showToast('🗑 Backlog limpo');
   }
@@ -1355,6 +1432,53 @@ function renderSaldo() {
   tbody.innerHTML = rows.join('');
 }
 
+// ── SALDO NO DASHBOARD (espelho de renderSaldo, sem alterar o original) ──
+function renderSaldoDash() {
+  const tbody = document.getElementById('saldoBodyDash');
+  if (!tbody) return;
+  const rows = [];
+
+  rows.push(`<tr><td colspan="6" style="background:#1a3a6b;color:#fff;font-size:11px;font-weight:700;text-align:center;padding:5px;letter-spacing:.5px">👨‍💻 DESENVOLVEDORES</td></tr>`);
+  cfg.devs.forEach(dev => {
+    const devCards = cards.filter(c => c.dev === dev);
+    const emExec = devCards.filter(c => STATUS_EXEC.includes(c.situacao)).reduce((a,c)=>a+(c.hDev||0), 0);
+    const filaEspera = devCards.filter(c => ['Product Backlog','Pronta para Desenvolvimento'].includes(c.situacao)).reduce((a,c)=>a+(c.hDev||0), 0);
+    const saldo = cfg.capDev - emExec - filaEspera;
+    const diasLivres = Math.floor(saldo / cfg.hpd);
+    let statusHTML;
+    if (saldo >= cfg.capDev * 0.5) statusHTML = `<span class="saldo-status-ok">✅ +${diasLivres}d livres</span>`;
+    else if (saldo > 0) statusHTML = `<span class="saldo-status-warn">⚠️ +${diasLivres}d livres</span>`;
+    else statusHTML = `<span class="saldo-status-over">🔴 Sobrecarga ${Math.abs(saldo)}h</span>`;
+    rows.push(`<tr>
+      <td class="name">${dev}</td><td>${cfg.capDev}</td>
+      <td><strong>${emExec||'0'}</strong></td><td>${filaEspera>0?filaEspera:'—'}</td>
+      <td class="saldo-highlight">${saldo}</td><td>${statusHTML}</td>
+    </tr>`);
+  });
+
+  rows.push(`<tr><td colspan="6" style="padding:3px;background:var(--bg)"></td></tr>`);
+  rows.push(`<tr><td colspan="6" style="background:#3b1a6b;color:#fff;font-size:11px;font-weight:700;text-align:center;padding:5px;letter-spacing:.5px">🧪 QA</td></tr>`);
+  cfg.qas.forEach(qa => {
+    const qaCards = cards.filter(c => c.qa === qa);
+    const emExec = qaCards.filter(c => ['Em teste','Disponivel para Teste','Em homologação'].includes(c.situacao)).reduce((a,c)=>a+(c.hQA||0), 0);
+    const filaEspera = qaCards.filter(c => STATUS_EXEC.includes(c.situacao) && c.estDev && c.estDev > toISO(new Date())).reduce((a,c)=>a+(c.hQA||0), 0);
+    const saldo = cfg.capQA - emExec;
+    const diasLivres = Math.floor(saldo / cfg.hpd);
+    let statusHTML;
+    if (saldo >= cfg.capQA * 0.5) statusHTML = `<span class="saldo-status-ok">✅ +${diasLivres}d livres</span>`;
+    else if (saldo > 0) statusHTML = `<span class="saldo-status-warn">⚠️ +${diasLivres}d livres</span>`;
+    else statusHTML = `<span class="saldo-status-over">🔴 Sobrecarga ${Math.abs(saldo)}h</span>`;
+    rows.push(`<tr>
+      <td class="name">${qa}</td><td>${cfg.capQA}</td>
+      <td><strong>${emExec||'0'}</strong></td>
+      <td style="color:${filaEspera>0?'var(--amber)':'var(--text3)'}"><strong>${filaEspera>0?filaEspera:'0'}</strong></td>
+      <td class="saldo-highlight">${saldo}</td><td>${statusHTML}</td>
+    </tr>`);
+  });
+
+  tbody.innerHTML = rows.join('');
+}
+
 // ── DASHBOARD ────────────────────────────────────────────────────────────
 function renderDashboard() {
   renderKPIs();
@@ -1362,6 +1486,7 @@ function renderDashboard() {
   renderSprintHealth();
   renderBurndown();
   renderTransbordos();
+  renderSaldoDash(); // Saldo embutido no dashboard
 }
 
 function renderKPIs() {
@@ -1686,8 +1811,8 @@ renderTable();
 renderSteps();
 window.addEventListener('resize', ()=>{ if(document.getElementById('tab-dashboard').classList.contains('active')) renderBurndown(); });
 
-// Seed data if empty
-if (cards.length===0) {
+// Seed data apenas na primeira vez (nunca se o usuário limpou intencionalmente)
+if (cards.length===0 && !localStorage.getItem(LS_PREFIX+'cleared')) {
   const seed = [
     {chave:'SLOPC-36636',resumo:'Relatório Semanal para o Escritório – Melhoria [#1161]',situacao:'Product Backlog',sp:21,hDev:80,dev:'Everton',inicioDev:'2026-03-27'},
     {chave:'SLOPC-36564',resumo:'OBF - [MELHORIA 1282] Ajustes na Aba "Resolvedor" da Tarefa: Reordenação, Renomeação e Novo Contador',situacao:'Desenvolvida',sp:'',hDev:0},
@@ -1702,7 +1827,8 @@ if (cards.length===0) {
   ];
   cards = seed.map(s=>calcCard({
     id:newId(), hDevManual:false, hQA:0, qa:'', inicioQA:'', inicioQAManual:false, estQA:'',
-    statusDev:'A Fazer', transbordo:false, risco:'Baixo', contabiliza:1, dev:'', ...s
+    statusDev:'A Fazer', statusDevManual:false, observacao:'',
+    transbordo:false, risco:'Baixo', contabiliza:1, dev:'', ...s
   }));
   saveToLS();
   renderTable();
